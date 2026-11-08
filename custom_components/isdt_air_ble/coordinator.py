@@ -219,6 +219,10 @@ class ISDTDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Alarm tone state (charger only)
         self._alarm_tone_on: bool | None = None
+        # Last charge current (mA) chosen per channel in HA. Used when a
+        # battery type is picked while the slot still runs in auto mode
+        # (which reports no current to reuse).
+        self.charge_current_setpoint: dict[int, int] = {}
 
         # Persistent BLE connection
         self._client: BleakClient | None = None
@@ -1254,6 +1258,27 @@ class ISDTDataUpdateCoordinator(DataUpdateCoordinator):
             )
             self._alarm_tone_on = enable
             _LOGGER.info("Alarm tone %s", "enabled" if enable else "disabled")
+
+    # ------------------------------------------------------------------
+    # Charge settings (battery type, charge current)
+    # ------------------------------------------------------------------
+
+    async def async_send_charge_task(self, channel: int, cmd: bytearray) -> None:
+        """Send a WorkTasksReq for one slot.
+
+        The charger answers with WorkTasksResp (0xEB) and reports the new
+        settings in the slot's next WorkStateResp; the polling loop picks
+        both up. Raises ConnectionError when the link is down.
+        """
+        async with self._connection_lock:
+            if not self._client or not self._client.is_connected:
+                raise ConnectionError("charger not connected")
+            _LOGGER.debug("Sending WorkTasksReq for channel %d: %s", channel, cmd.hex(" "))
+            await self._gatt(
+                self._client.write_gatt_char(CHAR_UUID_AF01, cmd, response=False),
+                "charge settings write",
+            )
+        _LOGGER.info("Charge settings sent for slot %d", channel + 1)
 
     # ------------------------------------------------------------------
     # MASS2 settings (beep, volume)

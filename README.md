@@ -106,6 +106,19 @@ Other BLE-enabled ISDT devices using the same protocol may also work. The integr
 | Battery Type | Text | Detected chemistry (LiPo, NiMH, LiFe, etc.) |
 | Internal Resistance | mOhm | Battery internal resistance |
 | Cell 1–16 Voltage | Voltage (V) | Individual cell voltages (C4 Air only, disabled by default) |
+| Battery Type Setting | Select (config) | `auto` or a fixed chemistry: LiHV, Li-ion, LiFePO4, NiZn, NiMH/NiCd, 1.5 V Li-ion (C4 Air only) |
+| Charge Current Setting | Number (config) | Charge current, 0.1–2.0 A in 0.1 A steps; unknown while the slot is in auto mode (C4 Air only) |
+
+**Charge settings (C4 Air):** the charger takes battery type and charge current of a slot together, so changing one sends both.
+Picking a chemistry keeps the current the slot already has (else the last one set in Home Assistant, else 0.5 A) and uses that
+chemistry's default cut-off voltage. Setting a current on a slot in auto mode keeps the chemistry the charger detected for the
+inserted battery; with no battery in an auto slot, pick a battery type first. `auto` hands the slot back to automatic detection.
+The charger stores the settings per slot, the same ones the ISDT app shows.
+Charging current changes take effect immediately, also during a running charge (the session continues). The charger may lower
+the reported current by itself after a battery is inserted.
+
+> **Caution:** a fixed battery type overrides the charger's detection. Charging a cell with the wrong chemistry (e.g. LiHV on a
+> standard Li-ion cell) overcharges it. Leave a slot on `auto` unless you know the cell type.
 
 ### MASS2 USB Adapter
 

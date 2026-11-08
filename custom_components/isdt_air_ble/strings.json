@@ -181,6 +181,23 @@
           "medium": "Medium",
           "high": "High"
         }
+      },
+      "battery_type_setting": {
+        "name": "Battery type setting",
+        "state": {
+          "auto": "Auto",
+          "lihv": "LiHV (4.35 V)",
+          "liion": "Li-ion (4.20 V)",
+          "life": "LiFePO4 (3.65 V)",
+          "nizn": "NiZn",
+          "nimh": "NiMH/NiCd",
+          "liion_1v5": "Li-ion 1.5 V"
+        }
+      }
+    },
+    "number": {
+      "charge_current_setting": {
+        "name": "Charge current setting"
       }
     },
     "update": {

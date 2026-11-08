@@ -28,6 +28,7 @@ from .const import (
     PS200_PROTOCOL_MAP,
     PS200_WORK_STATUS_CHANNEL_SIZE,
 )
+from .charge_settings import RESP_WORKTASKS
 
 _LOGGER = logging.getLogger(__name__)
 _RAW_LOGGER = logging.getLogger(__name__ + ".raw")
@@ -180,6 +181,16 @@ def parse_charger_responses(responses: list[bytes], num_channels: int = 6, model
             parsed[ch].update(parse_workstate(raw, model=model))
         elif cmd == RESP_IR:
             parsed[ch].update(parse_ir(raw))
+        elif cmd == RESP_WORKTASKS:
+            # Answer to a charge-settings write: [0x31, 0xEB, channel, error]
+            error = raw[3] if len(raw) > 3 else None
+            if error:
+                _LOGGER.warning(
+                    "Charger rejected the charge settings for slot %d (error 0x%02x)",
+                    ch + 1, error,
+                )
+            else:
+                _LOGGER.debug("Charge settings accepted for slot %d", ch + 1)
         else:
             _LOGGER.debug(
                 "Unknown CMD 0x%02x for channel %d: %s", cmd, ch, raw.hex(" ")
