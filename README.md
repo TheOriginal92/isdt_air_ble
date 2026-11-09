@@ -108,10 +108,26 @@ Other BLE-enabled ISDT devices using the same protocol may also work. The integr
 | Cell 1–16 Voltage | Voltage (V) | Individual cell voltages (C4 Air only, disabled by default) |
 | Battery Type Setting | Select (config) | `auto` or a fixed chemistry: LiHV, Li-ion, LiFePO4, NiZn, NiMH/NiCd, 1.5 V Li-ion (C4 Air only) |
 | Charge Current Setting | Number (config) | Charge current, 0.1–2.0 A in 0.1 A steps; unknown while the slot is in auto mode (C4 Air only) |
+| Cut-off Setting | Number (config) | Full-charge cut-off in mV (the -dV delta for NiMH/NiCd); range depends on the chemistry, unavailable in auto mode (C4 Air only) |
+| Capacity Limit Setting | Number (config) | Stop charging after this many mAh, 0 = off; range depends on the chemistry, unavailable in auto mode (C4 Air only) |
 
-**Charge settings (C4 Air):** the charger takes battery type and charge current of a slot together, so changing one sends both.
-Picking a chemistry keeps the current the slot already has (else the last one set in Home Assistant, else 0.5 A) and uses that
-chemistry's default cut-off voltage. Setting a current on a slot in auto mode keeps the chemistry the charger detected for the
+**Charge settings (C4 Air):** the charger takes battery type, charge current, cut-off and capacity limit of a slot in one
+command, so changing one resends the others as the slot reports them; values set in the ISDT app are kept. Picking a chemistry
+keeps the current the slot already has (else the last one set in Home Assistant, else 0.5 A) and the capacity limit if it fits,
+and uses that chemistry's default cut-off.
+
+| Battery type | Cut-off (mV) | Capacity limit (mAh) |
+| --- | --- | --- |
+| LiHV | 4250–4450 (default 4350) | 0 or 2000–7000 |
+| Li-ion | 4100–4300 (default 4200) | 0 or 2000–7000 |
+| LiFePO4 | 3550–3750 (default 3650) | 0 or 2000–7000 |
+| NiZn | 1800–2000 (default 1900) | 0 or 2000–7000 |
+| NiMH/NiCd | -dV 3–12 (default 4) | 0 or 1000–4000 |
+| Li-ion 1.5 V | fixed | 0 or 1000–4000 |
+
+Every change resets the slot's energy (Wh) counter; that is how the charger handles a new task.
+
+Setting a current on a slot in auto mode keeps the chemistry the charger detected for the
 inserted battery; with no battery in an auto slot, pick a battery type first. `auto` hands the slot back to automatic detection.
 The charger stores the settings per slot, the same ones the ISDT app shows.
 Charging current changes take effect immediately, also during a running charge (the session continues). The charger may lower

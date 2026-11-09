@@ -4,17 +4,10 @@ import logging
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .charge_settings import (
     BATTERY_TYPE_OPTIONS,
-    DEFAULT_CHARGE_CURRENT_MA,
-    OPTION_AUTO,
-    build_auto_cmd,
-    build_manual_cmd,
-    chemistry_for_option,
-    current_limits_ma,
     option_from_slot,
     supports_charge_settings,
 )
@@ -89,9 +82,10 @@ class ISDTMASS2VolumeSelect(CoordinatorEntity, SelectEntity):
 class ISDTSlotBatteryTypeSelect(CoordinatorEntity, SelectEntity):
     """Battery type setting of one charger slot (auto or a fixed chemistry).
 
-    Picking a chemistry sends it together with the slot's charge current
-    (the one the charger reports, else the last one set in HA, else a safe
-    default). "Auto" hands the slot back to automatic detection.
+    Picking a chemistry keeps the slot's charge current (else the last one
+    set in HA, else a safe default) and capacity limit if it fits, and uses
+    the chemistry's default cut-off. "Auto" hands the slot back to
+    automatic detection.
     """
 
     _attr_has_entity_name = True
@@ -122,25 +116,4 @@ class ISDTSlotBatteryTypeSelect(CoordinatorEntity, SelectEntity):
         return option_from_slot(self._slot())
 
     async def async_select_option(self, option: str) -> None:
-        if option == OPTION_AUTO:
-            cmd = build_auto_cmd(self._channel)
-        else:
-            chem = chemistry_for_option(option)
-            if chem is None:
-                raise HomeAssistantError(f"Unknown battery type: {option}")
-            slot = self._slot() or {}
-            reported_ma = round((slot.get("work_current") or 0) * 1000)
-            current_ma = (
-                reported_ma
-                or self.coordinator.charge_current_setpoint.get(self._channel)
-                or DEFAULT_CHARGE_CURRENT_MA
-            )
-            low, high = current_limits_ma(self.coordinator.model)
-            current_ma = max(low, min(high, current_ma))
-            cmd = build_manual_cmd(self._channel, chem, current_ma)
-        try:
-            await self.coordinator.async_send_charge_task(self._channel, cmd)
-        except Exception as err:
-            raise HomeAssistantError(
-                f"Could not set the battery type for slot {self._channel + 1}: {err}"
-            ) from err
+        await self.coordinator.async_apply_charge_settings(self._channel, option=option)

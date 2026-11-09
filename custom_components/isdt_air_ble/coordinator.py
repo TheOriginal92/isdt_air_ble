@@ -19,6 +19,7 @@ from bleak_retry_connector import establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothCallbackMatcher
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -73,6 +74,7 @@ from .parser import (
     parse_ps200_responses,
 )
 from .watchdog import ResponseStall, ResponseWatchdog
+from .charge_settings import ChargeSettingsError, build_settings_cmd, resolve_settings
 
 _LOGGER = logging.getLogger(__name__)
 _RAW_LOGGER = logging.getLogger(__name__ + ".raw")
@@ -1262,6 +1264,29 @@ class ISDTDataUpdateCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------
     # Charge settings (battery type, charge current)
     # ------------------------------------------------------------------
+
+    async def async_apply_charge_settings(self, channel: int, **change) -> None:
+        """Merge one change into a slot's settings and send them.
+
+        The charger takes all parameters of a slot in one command, so the
+        ones not being changed are resent as the slot reports them.
+        """
+        data = self.data or {}
+        try:
+            settings = resolve_settings(
+                data.get(channel),
+                self.model,
+                current_fallback_ma=self.charge_current_setpoint.get(channel),
+                **change,
+            )
+        except ChargeSettingsError as err:
+            raise HomeAssistantError(f"Slot {channel + 1}: {err}") from err
+        try:
+            await self.async_send_charge_task(channel, build_settings_cmd(channel, settings))
+        except Exception as err:
+            raise HomeAssistantError(
+                f"Could not send the charge settings for slot {channel + 1}: {err}"
+            ) from err
 
     async def async_send_charge_task(self, channel: int, cmd: bytearray) -> None:
         """Send a WorkTasksReq for one slot.
