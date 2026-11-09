@@ -127,6 +127,9 @@ and uses that chemistry's default cut-off.
 
 Every change resets the slot's energy (Wh) counter; that is how the charger handles a new task.
 
+Set the capacity limit with a battery inserted: on an empty slot the charger kept only some values and reported 0 for
+others. During a running charge a change also restarts the current ramp for a few seconds. Tested on firmware 1.23 and 2.0.
+
 Setting a current on a slot in auto mode keeps the chemistry the charger detected for the
 inserted battery; with no battery in an auto slot, pick a battery type first. `auto` hands the slot back to automatic detection.
 The charger stores the settings per slot, the same ones the ISDT app shows.
