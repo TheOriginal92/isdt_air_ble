@@ -55,6 +55,27 @@ DEFAULT_PHANTOM_THRESHOLD = 1.0
 DEFAULT_PHANTOM_DEBOUNCE = 2.5
 DEFAULT_PHANTOM_SUSTAIN = 5.0
 
+# Writing the per-slot charge settings (C4 Air). Each kind is opt-in and off
+# by default: these values decide how a cell is charged, and a wrong battery
+# type or cut-off can overcharge it.
+CONF_ALLOW_BATTERY_TYPE = "allow_battery_type_setting"
+CONF_ALLOW_CHARGE_CURRENT = "allow_charge_current_setting"
+CONF_ALLOW_CUTOFF = "allow_cutoff_setting"
+CONF_ALLOW_CAPACITY_LIMIT = "allow_capacity_limit_setting"
+CHARGE_SETTING_OPTIONS = (
+    CONF_ALLOW_BATTERY_TYPE,
+    CONF_ALLOW_CHARGE_CURRENT,
+    CONF_ALLOW_CUTOFF,
+    CONF_ALLOW_CAPACITY_LIMIT,
+)
+# Option -> (platform, unique-id suffix) of the writable entity it enables.
+CHARGE_SETTING_ENTITIES = {
+    CONF_ALLOW_BATTERY_TYPE: ("select", "battery_type_setting"),
+    CONF_ALLOW_CHARGE_CURRENT: ("number", "charge_current_setting"),
+    CONF_ALLOW_CUTOFF: ("number", "cutoff_setting"),
+    CONF_ALLOW_CAPACITY_LIMIT: ("number", "capacity_limit_setting"),
+}
+
 # BLE GATT characteristic UUIDs
 CHAR_UUID_AF01 = "0000af01-0000-1000-8000-00805f9b34fb"  # Notify/Write (normal polling)
 CHAR_UUID_AF02 = "0000af02-0000-1000-8000-00805f9b34fb"  # Write (hardware info)

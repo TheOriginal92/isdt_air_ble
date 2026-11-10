@@ -29,6 +29,8 @@ from .const import (
     PS200_WORK_STATUS_CHANNEL_SIZE,
 )
 
+from .charge_settings import RESP_WORKTASKS
+
 _LOGGER = logging.getLogger(__name__)
 _RAW_LOGGER = logging.getLogger(__name__ + ".raw")
 _RAW_LOGGER.setLevel(logging.WARNING)  # silent unless explicitly enabled
@@ -180,6 +182,13 @@ def parse_charger_responses(responses: list[bytes], num_channels: int = 6, model
             parsed[ch].update(parse_workstate(raw, model=model))
         elif cmd == RESP_IR:
             parsed[ch].update(parse_ir(raw))
+        elif cmd == RESP_WORKTASKS:
+            # Answer to a charge-settings write: [0x31, 0xEB, channel, error].
+            # The coordinator already handed it to the waiting write.
+            _LOGGER.debug(
+                "WorkTasksResp for slot %d: error 0x%02x",
+                ch + 1, raw[3] if len(raw) > 3 else 0,
+            )
         else:
             _LOGGER.debug(
                 "Unknown CMD 0x%02x for channel %d: %s", cmd, ch, raw.hex(" ")

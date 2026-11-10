@@ -22,6 +22,7 @@ from homeassistant.components.bluetooth import (
 )
 
 from .const import (
+    CHARGE_SETTING_OPTIONS,
     BIND_RESULT_OK,
     BIND_RESULT_WAITING,
     BIND_STATUS,
@@ -47,6 +48,7 @@ from .const import (
     RESP_BIND,
     detect_model_from_mfg_data,
     get_device_type,
+    supports_charge_settings,
 )
 from .parser import parse_hardware_info
 
@@ -131,6 +133,13 @@ class ISDTOptionsFlow(OptionsFlowWithReload):
                     ),
                 )
             ] = vol.All(vol.Coerce(float), vol.Range(min=0.0, max=120.0))
+
+        # Writing the charge settings of a slot is opt-in per setting.
+        if not is_adapter and supports_charge_settings(model):
+            for option in CHARGE_SETTING_OPTIONS:
+                schema_dict[
+                    vol.Required(option, default=options.get(option, False))
+                ] = bool
 
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema_dict))
 

@@ -113,6 +113,46 @@ Other BLE-enabled ISDT devices using the same protocol may also work. The integr
 The three setting sensors show the per-slot charge settings made in the ISDT app, read from the slot's work state. They
 are read-only.
 
+**Writing the charge settings (C4 Air, opt-in):** under *Settings → Devices & services → ISDT → Configure* four
+checkboxes, all off by default, add writable entities per slot:
+
+| Option | Entity | Description |
+| --- | --- | --- |
+| Allow setting the battery type | Battery Type Setting (select) | `auto` or a fixed chemistry: LiHV, Li-ion, LiFePO4, NiZn, NiMH/NiCd, 1.5 V Li-ion |
+| Allow setting the charge current | Charge Current Setting (number) | 0.1–2.0 A in 0.1 A steps |
+| Allow setting the cut-off voltage | Cut-off Setting (number) | mV, the -dV delta for NiMH/NiCd; range per chemistry |
+| Allow setting the capacity limit | Capacity Limit Setting (number) | mAh, 0 = off; range per chemistry |
+
+Switching an option off removes its entities again.
+
+- The charger takes all four values of a slot in one command, so a change resends the others as the slot reports them;
+  values set in the ISDT app are kept. Only the value being changed is checked against the table below.
+- A slot is shown as `auto` when it reports battery type Auto, or a chemistry with no current and no cut-off (that is how
+  an auto slot reports the chemistry it detected last). Current, cut-off and limit are only available on a slot with a
+  fixed type, so a change cannot pin the detected chemistry by accident. The select's `reported_battery_type` attribute
+  shows the raw value.
+- Picking a chemistry keeps the slot's current (else the last one set in Home Assistant, else 0.5 A) and the capacity
+  limit if it fits, and uses that chemistry's default cut-off.
+- Each write waits for the charger's answer; a rejected or unanswered write shows as an error. Until the next work state
+  reports the new values, the entities show what was sent, and a second change builds on it.
+
+| Battery type | Cut-off (mV) | Capacity limit (mAh) |
+| --- | --- | --- |
+| LiHV | 4250–4450 (default 4350) | 0 or 2000–7000 |
+| Li-ion | 4100–4300 (default 4200) | 0 or 2000–7000 |
+| LiFePO4 | 3550–3750 (default 3650) | 0 or 2000–7000 |
+| NiZn | 1800–2000 (default 1900) | 0 or 2000–7000 |
+| NiMH/NiCd | -dV 3–12 (default 4) | 0 or 1000–4000 |
+| Li-ion 1.5 V | fixed | 0 or 1000–4000 |
+
+Every change resets the slot's energy (Wh) counter and restarts the current ramp for a few seconds; the mAh counter keeps
+counting. Current and cut-off changes take effect during a running charge. Set the capacity limit with a battery
+inserted: on an empty slot the charger kept only some values. Tested on firmware 1.23 and 2.0.
+
+> **Caution:** a fixed battery type overrides the charger's detection. Charging a cell with the wrong chemistry (e.g.
+> LiHV on a standard Li-ion cell) overcharges it and can make it overheat. Scenes and automations can write these values
+> with nobody near the charger; leave a slot on `auto` unless you know the cell type.
+
 ### MASS2 USB Adapter
 
 **Main device:**

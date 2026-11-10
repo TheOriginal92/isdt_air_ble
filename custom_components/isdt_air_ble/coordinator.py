@@ -19,6 +19,7 @@ from bleak_retry_connector import establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothCallbackMatcher
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -73,6 +74,15 @@ from .parser import (
     parse_ps200_responses,
 )
 from .watchdog import ResponseStall, ResponseWatchdog
+from .charge_settings import (
+    RESP_WORKTASKS,
+    ChargeSettingsError,
+    SlotSettings,
+    build_settings_cmd,
+    overlay_settings,
+    resolve_settings,
+    slot_matches,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _RAW_LOGGER = logging.getLogger(__name__ + ".raw")
@@ -118,6 +128,13 @@ _STALL_GRACE = 300.0  # seconds
 # D-Bus call and the await would block the live loop forever — the
 # response watchdog only runs after the write returns.
 _GATT_OP_TIMEOUT = 5.0  # seconds
+
+# Wait for the charger's WorkTasksResp after a settings write. It arrives
+# between the poll responses, usually within a second.
+_TASK_ACK_TIMEOUT = 5.0  # seconds
+# How long settings the charger accepted are shown before its WorkState
+# reports them; a 6-slot poll cycle takes about 2-4 s.
+_SETTINGS_OVERLAY_TTL = 15.0  # seconds
 
 # Phantom-filter: low-power threshold for the sustained-active path.
 # Below this, a port is considered definitely phantom/off regardless
@@ -219,6 +236,20 @@ class ISDTDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Alarm tone state (charger only)
         self._alarm_tone_on: bool | None = None
+
+        # Charge settings (C4 Air). Last current (mA) chosen per channel in
+        # HA, used when a battery type is picked on an auto slot (which
+        # reports no current to reuse).
+        self.charge_current_setpoint: dict[int, int] = {}
+        # One settings write at a time, so a second change builds on the
+        # first one instead of on the last (older) poll.
+        self._settings_lock = asyncio.Lock()
+        # Pending WorkTasksResp per channel: resolves to the error byte.
+        self._task_acks: dict[int, asyncio.Future] = {}
+        # Settings the charger accepted but has not reported back yet, with
+        # the time they were sent. Shown and built upon until the slot's
+        # WorkState reports them or _SETTINGS_OVERLAY_TTL passes.
+        self._settings_overlay: dict[int, tuple[SlotSettings, float]] = {}
 
         # Persistent BLE connection
         self._client: BleakClient | None = None
@@ -666,6 +697,7 @@ class ISDTDataUpdateCoordinator(DataUpdateCoordinator):
             parsed = clear_empty_slots(self._charger_hold.apply(parsed))
             if alarm_tone_on is not None:
                 self._alarm_tone_on = alarm_tone_on
+            self._expire_settings_overlay(parsed)
 
         # Fetch hardware info if not yet done
         if not self._hw_info_fetched:
@@ -967,6 +999,7 @@ class ISDTDataUpdateCoordinator(DataUpdateCoordinator):
             if self.device_type == DeviceType.ADAPTER:
                 self._handle_adapter_notification(data)
             else:
+                self._resolve_task_ack(data)
                 try:
                     self._response_queue.put_nowait(data)
                 except asyncio.QueueFull:
@@ -1254,6 +1287,119 @@ class ISDTDataUpdateCoordinator(DataUpdateCoordinator):
             )
             self._alarm_tone_on = enable
             _LOGGER.info("Alarm tone %s", "enabled" if enable else "disabled")
+
+    # ------------------------------------------------------------------
+    # Charge settings (battery type, current, cut-off, capacity limit)
+    # ------------------------------------------------------------------
+
+    def slot_view(self, channel: int) -> dict | None:
+        """Return a slot's data with settings that are sent but not yet read back."""
+        data = self.data or {}
+        slot = data.get(channel)
+        overlay = self._settings_overlay.get(channel)
+        if slot is None or overlay is None:
+            return slot
+        return overlay_settings(slot, overlay[0])
+
+    def _expire_settings_overlay(self, parsed: dict) -> None:
+        """Drop overlays the charger now reports, or that are too old."""
+        if not self._settings_overlay:
+            return
+        now = time.monotonic()
+        dropped = False
+        for channel, (settings, sent) in list(self._settings_overlay.items()):
+            slot = parsed.get(channel)
+            if slot is not None and slot_matches(slot, settings):
+                del self._settings_overlay[channel]
+            elif now - sent > _SETTINGS_OVERLAY_TTL:
+                _LOGGER.info(
+                    "Slot %d does not report the settings sent %.0fs ago; "
+                    "showing what the charger reports",
+                    channel + 1,
+                    now - sent,
+                )
+                del self._settings_overlay[channel]
+                dropped = True
+        if dropped and self.data:
+            # The data push may be skipped as unchanged; the entities still
+            # show the overlay, so refresh them.
+            self.async_update_listeners()
+
+    def _resolve_task_ack(self, data: bytes) -> None:
+        """Hand a WorkTasksResp (0x31 0xEB ch error) to the waiting write."""
+        if len(data) < 4 or data[1] != RESP_WORKTASKS:
+            return
+        future = self._task_acks.pop(data[2], None)
+        if future is not None and not future.done():
+            future.set_result(data[3])
+
+    async def async_apply_charge_settings(self, channel: int, **change) -> None:
+        """Merge one change into a slot's settings, send them, await the answer.
+
+        The charger takes all parameters of a slot in one command, so the
+        ones not being changed are resent as the slot reports them (or as
+        an earlier write from HA set them, if the charger has not reported
+        that one back yet).
+        """
+        async with self._settings_lock:
+            try:
+                settings = resolve_settings(
+                    self.slot_view(channel),
+                    self.model,
+                    current_fallback_ma=self.charge_current_setpoint.get(channel),
+                    **change,
+                )
+            except ChargeSettingsError as err:
+                raise HomeAssistantError(f"Slot {channel + 1}: {err}") from err
+
+            error = await self._async_send_charge_task(
+                channel, build_settings_cmd(channel, settings)
+            )
+            if error:
+                raise HomeAssistantError(
+                    f"Slot {channel + 1}: the charger rejected the settings "
+                    f"(error 0x{error:02x})"
+                )
+            self._settings_overlay[channel] = (settings, time.monotonic())
+        _LOGGER.info("Charge settings for slot %d accepted: %s", channel + 1, settings)
+        self.async_update_listeners()
+
+    async def _async_send_charge_task(self, channel: int, cmd: bytearray) -> int:
+        """Send a WorkTasksReq for one slot and return the charger's error byte.
+
+        Raises HomeAssistantError when the link is down or no WorkTasksResp
+        arrives in time.
+        """
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        async with self._connection_lock:
+            if not self._client or not self._client.is_connected:
+                raise HomeAssistantError(
+                    f"Slot {channel + 1}: the charger is not connected"
+                )
+            self._task_acks[channel] = future
+            _LOGGER.debug("Sending WorkTasksReq for channel %d: %s", channel, cmd.hex(" "))
+            try:
+                await self._gatt(
+                    self._client.write_gatt_char(CHAR_UUID_AF01, cmd, response=False),
+                    "charge settings write",
+                )
+            except Exception as err:
+                self._task_acks.pop(channel, None)
+                raise HomeAssistantError(
+                    f"Slot {channel + 1}: could not send the settings: {err}"
+                ) from err
+        try:
+            async with asyncio.timeout(_TASK_ACK_TIMEOUT):
+                return await future
+        except TimeoutError as err:
+            raise HomeAssistantError(
+                f"Slot {channel + 1}: the charger did not confirm the settings "
+                f"within {_TASK_ACK_TIMEOUT:.0f}s; check the slot before relying on them"
+            ) from err
+        finally:
+            if self._task_acks.get(channel) is future:
+                del self._task_acks[channel]
 
     # ------------------------------------------------------------------
     # MASS2 settings (beep, volume)

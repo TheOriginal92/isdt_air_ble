@@ -21,6 +21,7 @@ from .const import (
     CONF_PHANTOM_SUSTAIN,
     CONF_PHANTOM_THRESHOLD,
     CONF_COMMAND_INTERVAL,
+    CHARGE_SETTING_ENTITIES,
     DEFAULT_PHANTOM_DEBOUNCE,
     DEFAULT_PHANTOM_SUSTAIN,
     DEFAULT_PHANTOM_THRESHOLD,
@@ -46,7 +47,14 @@ from .helpers import async_get_own_device
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH, Platform.SELECT, Platform.UPDATE]
+PLATFORMS = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SWITCH,
+    Platform.SELECT,
+    Platform.NUMBER,
+    Platform.UPDATE,
+]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -134,6 +142,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     _async_cleanup_stale_registry(hass, entry, address, model)
+    _async_cleanup_disabled_charge_settings(hass, entry)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -304,6 +313,25 @@ def _async_cleanup_stale_registry(
                     "Removing stale slot device %s (%s)", device.name, identifier
                 )
                 dev_reg.async_remove_device(device.id)
+
+
+def _async_cleanup_disabled_charge_settings(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Remove the writable charge-setting entities whose option is off.
+
+    They are only created while their option is on; switching it off
+    reloads the entry, and without this the old entities would linger in
+    the registry as unavailable.
+    """
+    ent_reg = er.async_get(hass)
+    for option, (platform, suffix) in CHARGE_SETTING_ENTITIES.items():
+        if entry.options.get(option, False):
+            continue
+        for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+            if entity.domain == platform and entity.unique_id.endswith(f"_{suffix}"):
+                _LOGGER.debug("Removing %s, its option is off", entity.entity_id)
+                ent_reg.async_remove(entity.entity_id)
 
 
 def _mfg_data_from_cache(hass: HomeAssistant, address: str) -> bytes | None:
