@@ -1,0 +1,138 @@
+name: Sync upstream releases
+
+# Merges every new release of the original integration (mtheli/isdt_air_ble)
+# into this fork's master, keeps the fork's own changes (opt-in writing of the
+# C4 Air charge settings), runs the tests and publishes a fork release
+# "<upstream tag>-rw.1" that the Home Assistant Marketplace offers as update.
+# On a merge conflict or failing tests nothing is published and an issue is
+# opened instead.
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: mtheli/isdt_air_ble
+  SUFFIX: rw
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep the scheduled workflows enabled
+        # GitHub disables scheduled workflows of public repositories after
+        # 60 days without activity. Re-enabling them resets that timer.
+        run: |
+          for wf in sync-upstream.yml validate.yml; do
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$wf/enable" \
+              || echo "could not re-enable $wf"
+          done
+
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Find the latest upstream release
+        id: upstream
+        run: |
+          tag=$(gh release view --repo "$UPSTREAM" --json tagName -q .tagName)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fork_tag="${tag}-${SUFFIX}.1"
+          echo "fork_tag=$fork_tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$fork_tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Upstream $tag is already released here as $fork_tag."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New upstream release: $tag"
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge the upstream release
+        id: merge
+        if: steps.upstream.outputs.new == 'true'
+        run: |
+          tag="${{ steps.upstream.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags "https://github.com/$UPSTREAM.git" "refs/tags/$tag:refs/upstream/$tag"
+          if git merge-base --is-ancestor "refs/upstream/$tag" HEAD; then
+            echo "Already contains $tag."
+          elif ! git merge --no-ff --no-edit -m "Merge upstream release $tag" "refs/upstream/$tag"; then
+            git diff --name-only --diff-filter=U > conflicts.txt
+            git merge --abort
+            echo "failed=conflict" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.upstream.outputs.new == 'true'
+        with:
+          python-version: "3.13"
+
+      - name: Run the tests
+        id: tests
+        if: steps.upstream.outputs.new == 'true'
+        run: |
+          pip install --quiet pytest
+          python -m pytest -q 2>&1 | tee pytest.txt
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Publish the fork release
+        if: steps.upstream.outputs.new == 'true'
+        run: |
+          tag="${{ steps.upstream.outputs.tag }}"
+          fork_tag="${{ steps.upstream.outputs.fork_tag }}"
+          manifest=custom_components/isdt_air_ble/manifest.json
+          sed -i -E "s/\"version\": *\"[^\"]*\"/\"version\": \"${fork_tag#v}\"/" "$manifest"
+          git add "$manifest"
+          git commit -m "release: $fork_tag"
+          git push origin HEAD:master
+          {
+            echo "Upstream release [$tag](https://github.com/$UPSTREAM/releases/tag/$tag), merged into this fork."
+            echo
+            echo "This fork adds opt-in writing of the C4 Air charge settings (battery type, current, cut-off,"
+            echo "capacity limit), off by default, enabled per setting in the integration's options."
+            echo
+            echo "---"
+            echo
+            gh release view "$tag" --repo "$UPSTREAM" --json body -q .body
+          } > notes.md
+          gh release create "$fork_tag" --target master --title "$fork_tag" --notes-file notes.md
+
+      - name: Report a failed sync
+        if: failure() && steps.upstream.outputs.new == 'true'
+        run: |
+          tag="${{ steps.upstream.outputs.tag }}"
+          title="Upstream sync failed for $tag"
+          if [ "$(gh issue list --state open --search "in:title \"$title\"" --json number -q length)" != "0" ]; then
+            echo "Issue already open."
+            exit 0
+          fi
+          {
+            if [ "${{ steps.merge.outputs.failed }}" = "conflict" ]; then
+              echo "Merging upstream $tag into master gives conflicts in:"
+              echo
+              sed 's/^/- /' conflicts.txt
+            else
+              echo "The merge of upstream $tag or its release failed. Test output (tail):"
+              echo
+              echo '```'
+              tail -n 40 pytest.txt 2>/dev/null || echo "(no test output)"
+              echo '```'
+            fi
+            echo
+            echo "Nothing was published. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > issue.md
+          gh issue create --title "$title" --body-file issue.md
