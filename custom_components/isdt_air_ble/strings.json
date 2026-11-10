@@ -101,13 +101,13 @@
         "name": "Battery Type"
       },
       "charge_current_setting": {
-        "name": "Charge current setting"
+        "name": "Charge Current Setting"
       },
       "cutoff_setting": {
-        "name": "Cut-off setting"
+        "name": "Cut-off Setting"
       },
       "capacity_limit_setting": {
-        "name": "Capacity limit setting"
+        "name": "Capacity Limit Setting"
       },
       "internal_resistance": {
         "name": "Internal Resistance"
@@ -200,7 +200,7 @@
         }
       },
       "battery_type_setting": {
-        "name": "Battery type setting",
+        "name": "Battery Type Setting",
         "state": {
           "auto": "Auto",
           "lihv": "LiHV (4.35 V)",
@@ -214,13 +214,13 @@
     },
     "number": {
       "charge_current_setting": {
-        "name": "Charge current setting"
+        "name": "Charge Current Setting"
       },
       "cutoff_setting": {
-        "name": "Cut-off setting"
+        "name": "Cut-off Setting"
       },
       "capacity_limit_setting": {
-        "name": "Capacity limit setting"
+        "name": "Capacity Limit Setting"
       }
     },
     "update": {
